@@ -1,0 +1,6 @@
+{
+  "name": "Casio Sci-Calc",
+  "description": "An advanced scientific calculator featuring trigonometry, logarithms, matrix algebra, interactive 2D/3D graphing, and full Casio-style layout on Material 3.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
