@@ -11,6 +11,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,6 +37,11 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -72,6 +79,27 @@ import com.example.calculator.AngleUnit
 import com.example.data.HistoryItem
 import java.util.Locale
 
+data class LayoutConfig(
+    val layoutType: LayoutType,
+    val buttonHeight: androidx.compose.ui.unit.Dp,
+    val buttonFontSize: androidx.compose.ui.unit.TextUnit,
+    val displayFontSize: androidx.compose.ui.unit.TextUnit,
+    val displayResultFontSize: androidx.compose.ui.unit.TextUnit,
+    val gap: androidx.compose.ui.unit.Dp,
+    val padding: androidx.compose.ui.unit.Dp,
+    val sidePanelsHidden: Boolean,
+    val maxContainerWidth: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp.Unspecified
+)
+
+enum class LayoutType {
+    MOBILE_PORTRAIT,
+    MOBILE_LANDSCAPE,
+    TABLET_PORTRAIT,
+    TABLET_LANDSCAPE,
+    DESKTOP,
+    WIDE_DESKTOP
+}
+
 @Composable
 fun CalculatorMainScreen(
     viewModel: CalculatorViewModel,
@@ -88,182 +116,649 @@ fun CalculatorMainScreen(
     var showHistory by remember { mutableStateOf(false) }
 
     val tabModes = listOf(
-        Pair(CalculatorMode.COMP, "COMP"),
-        Pair(CalculatorMode.MATRIX, "MATRIX"),
-        Pair(CalculatorMode.GRAPH_2D, "GRAPH 2D"),
-        Pair(CalculatorMode.GRAPH_3D, "GRAPH 3D"),
-        Pair(CalculatorMode.TUTORIAL, "TUTORIAL")
+        Triple(CalculatorMode.COMP, "COMP", Icons.Default.Home),
+        Triple(CalculatorMode.MATRIX, "MAT", Icons.Default.List),
+        Triple(CalculatorMode.GRAPH_2D, "2D", Icons.Default.Search),
+        Triple(CalculatorMode.GRAPH_3D, "3D", Icons.Default.Star),
+        Triple(CalculatorMode.TUTORIAL, "TUTOR", Icons.Default.Info)
     )
 
-    Column(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFFFAFBFF))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Mode Selector and Header Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "CASIO",
-                    fontFamily = FontFamily.SansSerif,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 20.sp,
-                    color = Color(0xFF1C1B1F),
-                    letterSpacing = 2.sp
+        val width = maxWidth
+        val height = maxHeight
+
+        val config = remember(width, height) {
+            if (height <= 480.dp && width > height) {
+                // MOBILE LANDSCAPE
+                LayoutConfig(
+                    layoutType = LayoutType.MOBILE_LANDSCAPE,
+                    buttonHeight = 44.dp,
+                    buttonFontSize = 11.sp,
+                    displayFontSize = 16.sp,
+                    displayResultFontSize = 22.sp,
+                    gap = 6.dp,
+                    padding = 8.dp,
+                    sidePanelsHidden = true
                 )
-                Text(
-                    text = "cl-991EX Premium (Material)",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
+            } else if (width <= 480.dp) {
+                // MOBILE PORTRAIT
+                LayoutConfig(
+                    layoutType = LayoutType.MOBILE_PORTRAIT,
+                    buttonHeight = 52.dp,
+                    buttonFontSize = 12.sp,
+                    displayFontSize = 22.sp,
+                    displayResultFontSize = 28.sp,
+                    gap = 8.dp,
+                    padding = 12.dp,
+                    sidePanelsHidden = true
+                )
+            } else if (width <= 768.dp) {
+                // TABLET PORTRAIT
+                LayoutConfig(
+                    layoutType = LayoutType.TABLET_PORTRAIT,
+                    buttonHeight = 60.dp,
+                    buttonFontSize = 13.sp,
+                    displayFontSize = 24.sp,
+                    displayResultFontSize = 32.sp,
+                    gap = 10.dp,
+                    padding = 16.dp,
+                    sidePanelsHidden = true,
+                    maxContainerWidth = 540.dp
+                )
+            } else if (width <= 1024.dp) {
+                // TABLET LANDSCAPE
+                LayoutConfig(
+                    layoutType = LayoutType.TABLET_LANDSCAPE,
+                    buttonHeight = 64.dp,
+                    buttonFontSize = 14.sp,
+                    displayFontSize = 28.sp,
+                    displayResultFontSize = 36.sp,
+                    gap = 12.dp,
+                    padding = 20.dp,
+                    sidePanelsHidden = false
+                )
+            } else if (width <= 1440.dp) {
+                // DESKTOP
+                LayoutConfig(
+                    layoutType = LayoutType.DESKTOP,
+                    buttonHeight = 68.dp,
+                    buttonFontSize = 14.sp,
+                    displayFontSize = 30.sp,
+                    displayResultFontSize = 40.sp,
+                    gap = 14.dp,
+                    padding = 24.dp,
+                    sidePanelsHidden = false
+                )
+            } else {
+                // WIDE DESKTOP
+                LayoutConfig(
+                    layoutType = LayoutType.WIDE_DESKTOP,
+                    buttonHeight = 72.dp,
+                    buttonFontSize = 15.sp,
+                    displayFontSize = 34.sp,
+                    displayResultFontSize = 44.sp,
+                    gap = 16.dp,
+                    padding = 32.dp,
+                    sidePanelsHidden = false,
+                    maxContainerWidth = 1280.dp
                 )
             }
+        }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                // Rad/Deg selector
-                Button(
-                    onClick = { viewModel.toggleAngleUnit() },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    ),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.height(34.dp).testTag("rad_deg_toggle")
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(config.padding),
+            verticalArrangement = Arrangement.spacedBy(config.gap)
+        ) {
+            // Header Area
+            if (config.layoutType != LayoutType.MOBILE_LANDSCAPE) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "CASIO",
+                            fontFamily = FontFamily.SansSerif,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 22.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            letterSpacing = 2.sp
+                        )
+                        Text(
+                            text = "cl-991EX Premium",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.outline,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // RAD/DEG/GRAD Segmented Button Pill
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(24.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                .height(40.dp)
+                        ) {
+                            AngleUnit.values().forEach { unit ->
+                                val isSelected = angleUnit == unit
+                                Box(
+                                    modifier = Modifier
+                                        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                        .clickable { viewModel.setAngleUnit(unit) }
+                                        .padding(horizontal = 12.dp)
+                                        .fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = unit.name,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+                        }
+
+                        if (config.sidePanelsHidden) {
+                            IconButton(
+                                onClick = { showHistory = !showHistory },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .testTag("history_toggle_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = "Show history logs",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { viewModel.exportHistoryToText(context) },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .testTag("export_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Export backup",
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = angleUnit.name,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        text = "CASIO cl-991EX",
+                        fontWeight = FontWeight.Black,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-                }
-
-                // History Drawer Toggle
-                IconButton(
-                    onClick = { showHistory = !showHistory },
-                    modifier = Modifier
-                        .size(34.dp)
-                        .background(Color(0xFFE1E2EC), RoundedCornerShape(8.dp))
-                        .testTag("history_toggle_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Menu,
-                        contentDescription = "Show history logs",
-                        modifier = Modifier.size(18.dp),
-                        tint = Color(0xFF1C1B1F)
-                    )
-                }
-
-                // Export share action
-                IconButton(
-                    onClick = { viewModel.exportHistoryToText(context) },
-                    modifier = Modifier
-                        .size(34.dp)
-                        .background(Color(0xFFC4EED0), RoundedCornerShape(8.dp))
-                        .testTag("export_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = "Export backup",
-                        modifier = Modifier.size(18.dp),
-                        tint = Color(0xFF00210E)
-                    )
-                }
-            }
-        }
-
-        // Mode Slider Selector Tabs
-        ScrollableTabRow(
-            selectedTabIndex = tabModes.indexOfFirst { it.first == currentMode },
-            containerColor = Color.Transparent,
-            edgePadding = 0.dp,
-            divider = {},
-            indicator = {},
-            modifier = Modifier.fillMaxWidth().height(42.dp)
-        ) {
-            tabModes.forEachIndexed { index, (mode, name) ->
-                val selected = currentMode == mode
-                Tab(
-                    selected = selected,
-                    onClick = {
-                        viewModel.setMode(mode)
-                        showHistory = false
-                    },
-                    modifier = Modifier
-                        .padding(horizontal = 4.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            if (selected) MaterialTheme.colorScheme.primary else Color(0xFFE1E2EC)
-                        )
-                        .height(36.dp)
-                        .testTag("tab_${name.lowercase()}"),
-                    text = {
-                        Text(
-                            text = name,
-                            color = if (selected) Color.White else Color(0xFF1C1B1F),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp
-                        )
-                    }
-                )
-            }
-        }
-
-        // Expanded Drawer or History Panel
-        AnimatedVisibility(
-            visible = showHistory,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
-        ) {
-            HistoryPanel(viewModel = viewModel)
-        }
-
-        // MAIN ADAPTIVE VIEW BASED ON SELECT MODE
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        ) {
-            when (currentMode) {
-                CalculatorMode.COMP -> {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // High Legibility LCD M3 Screen
-                        LcdDisplay(
-                            expr = exprInput,
-                            res = evalResult,
-                            isShift = isShift,
-                            isAlpha = isAlpha,
-                            angleUnit = angleUnit,
-                            viewModel = viewModel
-                        )
+                        // Small landscape Segmented Row
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                                .height(32.dp)
+                        ) {
+                            AngleUnit.values().forEach { unit ->
+                                val isSelected = angleUnit == unit
+                                Box(
+                                    modifier = Modifier
+                                        .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                        .clickable { viewModel.setAngleUnit(unit) }
+                                        .padding(horizontal = 8.dp)
+                                        .fillMaxHeight(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = unit.name,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+                        }
 
-                        // Custom scientific key matrix (all-in-one spacious layout)
-                        KeyboardScientificGrid(
-                            viewModel = viewModel,
-                            modifier = Modifier.weight(1f)
-                        )
+                        IconButton(
+                            onClick = { viewModel.exportHistoryToText(context) },
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Export",
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
                     }
                 }
-                CalculatorMode.MATRIX -> {
-                    MatrixCalculatorView(viewModel = viewModel)
+            }
+
+            // Tabs Row
+            val selectedTabIndex = tabModes.indexOfFirst { it.first == currentMode }.coerceAtLeast(0)
+            ScrollableTabRow(
+                selectedTabIndex = selectedTabIndex,
+                containerColor = Color.Transparent,
+                edgePadding = 0.dp,
+                divider = {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (config.layoutType == LayoutType.MOBILE_LANDSCAPE) 44.dp else 56.dp)
+            ) {
+                tabModes.forEachIndexed { index, (mode, name, icon) ->
+                    val selected = currentMode == mode
+                    Tab(
+                        selected = selected,
+                        onClick = {
+                            viewModel.setMode(mode)
+                            showHistory = false
+                        },
+                        selectedContentColor = MaterialTheme.colorScheme.primary,
+                        unselectedContentColor = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier
+                            .testTag("tab_${name.lowercase()}"),
+                        icon = {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        text = {
+                            Text(
+                                text = name,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = if (config.layoutType == LayoutType.MOBILE_LANDSCAPE) 9.sp else 11.sp,
+                                maxLines = 1
+                            )
+                        }
+                    )
                 }
-                CalculatorMode.GRAPH_2D -> {
-                    Graph2DView(viewModel = viewModel)
-                }
-                CalculatorMode.GRAPH_3D -> {
-                    Graph3DView(viewModel = viewModel)
-                }
-                CalculatorMode.TUTORIAL -> {
-                    EducationalTutorialView()
+            }
+
+            // MAIN Body Layout Space
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                when (currentMode) {
+                    CalculatorMode.COMP -> {
+                        when (config.layoutType) {
+                            LayoutType.MOBILE_PORTRAIT -> {
+                                Box(modifier = Modifier.fillMaxSize()) {
+                                    Column(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalArrangement = Arrangement.spacedBy(config.gap)
+                                    ) {
+                                        LcdDisplay(
+                                            expr = exprInput,
+                                            res = evalResult,
+                                            isShift = isShift,
+                                            isAlpha = isAlpha,
+                                            angleUnit = angleUnit,
+                                            viewModel = viewModel,
+                                            displayFontSize = config.displayFontSize,
+                                            displayResultFontSize = config.displayResultFontSize,
+                                            height = 110.dp
+                                        )
+
+                                        KeyboardScientificGrid(
+                                            viewModel = viewModel,
+                                            modifier = Modifier.weight(1f),
+                                            buttonHeight = config.buttonHeight,
+                                            buttonFontSize = config.buttonFontSize,
+                                            gap = config.gap
+                                        )
+                                    }
+
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = showHistory,
+                                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                                    ) {
+                                        HistoryPanel(
+                                            viewModel = viewModel,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(300.dp)
+                                                .background(Color.Black.copy(alpha = 0.95f), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                                                .padding(8.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            LayoutType.MOBILE_LANDSCAPE -> {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.spacedBy(config.gap)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.weight(0.4f),
+                                        verticalArrangement = Arrangement.spacedBy(config.gap)
+                                    ) {
+                                        LcdDisplay(
+                                            expr = exprInput,
+                                            res = evalResult,
+                                            isShift = isShift,
+                                            isAlpha = isAlpha,
+                                            angleUnit = angleUnit,
+                                            viewModel = viewModel,
+                                            displayFontSize = config.displayFontSize,
+                                            displayResultFontSize = config.displayResultFontSize,
+                                            height = 90.dp
+                                        )
+
+                                        HistoryPanel(
+                                            viewModel = viewModel,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+
+                                    KeyboardScientificGrid(
+                                        viewModel = viewModel,
+                                        modifier = Modifier.weight(0.6f),
+                                        buttonHeight = config.buttonHeight,
+                                        buttonFontSize = config.buttonFontSize,
+                                        gap = config.gap
+                                    )
+                                }
+                            }
+
+                            LayoutType.TABLET_PORTRAIT -> {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .widthIn(max = 540.dp)
+                                            .fillMaxHeight(),
+                                        verticalArrangement = Arrangement.spacedBy(config.gap)
+                                    ) {
+                                        LcdDisplay(
+                                            expr = exprInput,
+                                            res = evalResult,
+                                            isShift = isShift,
+                                            isAlpha = isAlpha,
+                                            angleUnit = angleUnit,
+                                            viewModel = viewModel,
+                                            displayFontSize = config.displayFontSize,
+                                            displayResultFontSize = config.displayResultFontSize,
+                                            height = 130.dp
+                                        )
+
+                                        KeyboardScientificGrid(
+                                            viewModel = viewModel,
+                                            modifier = Modifier.weight(1f),
+                                            buttonHeight = config.buttonHeight,
+                                            buttonFontSize = config.buttonFontSize,
+                                            gap = config.gap
+                                        )
+
+                                        AnimatedVisibility(
+                                            visible = showHistory,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            HistoryPanel(
+                                                viewModel = viewModel,
+                                                modifier = Modifier.height(180.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            LayoutType.TABLET_LANDSCAPE -> {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.spacedBy(config.gap),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .widthIn(max = 580.dp)
+                                            .weight(1f)
+                                            .fillMaxHeight(),
+                                        verticalArrangement = Arrangement.spacedBy(config.gap)
+                                    ) {
+                                        LcdDisplay(
+                                            expr = exprInput,
+                                            res = evalResult,
+                                            isShift = isShift,
+                                            isAlpha = isAlpha,
+                                            angleUnit = angleUnit,
+                                            viewModel = viewModel,
+                                            displayFontSize = config.displayFontSize,
+                                            displayResultFontSize = config.displayResultFontSize,
+                                            height = 140.dp
+                                        )
+
+                                        KeyboardScientificGrid(
+                                            viewModel = viewModel,
+                                            modifier = Modifier.weight(1f),
+                                            buttonHeight = config.buttonHeight,
+                                            buttonFontSize = config.buttonFontSize,
+                                            gap = config.gap
+                                        )
+                                    }
+
+                                    HistoryPanel(
+                                        viewModel = viewModel,
+                                        modifier = Modifier
+                                            .width(260.dp)
+                                            .fillMaxHeight()
+                                    )
+                                }
+                            }
+
+                            LayoutType.DESKTOP -> {
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.spacedBy(config.gap)
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .width(420.dp)
+                                            .fillMaxHeight(),
+                                        verticalArrangement = Arrangement.spacedBy(config.gap)
+                                    ) {
+                                        LcdDisplay(
+                                            expr = exprInput,
+                                            res = evalResult,
+                                            isShift = isShift,
+                                            isAlpha = isAlpha,
+                                            angleUnit = angleUnit,
+                                            viewModel = viewModel,
+                                            displayFontSize = config.displayFontSize,
+                                            displayResultFontSize = config.displayResultFontSize,
+                                            height = 150.dp
+                                        )
+
+                                        KeyboardScientificGrid(
+                                            viewModel = viewModel,
+                                            modifier = Modifier.weight(1f),
+                                            buttonHeight = config.buttonHeight,
+                                            buttonFontSize = config.buttonFontSize,
+                                            gap = config.gap
+                                        )
+                                    }
+
+                                    Column(
+                                        modifier = Modifier
+                                            .width(360.dp)
+                                            .fillMaxHeight(),
+                                        verticalArrangement = Arrangement.spacedBy(config.gap)
+                                    ) {
+                                        HistoryPanel(
+                                            viewModel = viewModel,
+                                            modifier = Modifier.weight(1.2f)
+                                        )
+
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E242C)),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .weight(0.8f)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Text("STUDENT QUICK TIPS", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                                Text("✏️ Double tap Shift/Alpha for direct keyboard bindings.", fontSize = 10.sp, color = Color.White.copy(alpha = 0.8f))
+                                                Text("📊 Shift + pi inserts constants values and automatic multiplications.", fontSize = 10.sp, color = Color.White.copy(alpha = 0.8f))
+                                                Text("📈 Try the 2D & 3D real-time visual function graphs on target tabs!", fontSize = 10.sp, color = Color.White.copy(alpha = 0.8f))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            LayoutType.WIDE_DESKTOP -> {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .widthIn(max = 1280.dp)
+                                            .fillMaxHeight(),
+                                        horizontalArrangement = Arrangement.spacedBy(config.gap)
+                                    ) {
+                                        HistoryPanel(
+                                            viewModel = viewModel,
+                                            modifier = Modifier
+                                                .width(320.dp)
+                                                .fillMaxHeight()
+                                        )
+
+                                        Column(
+                                            modifier = Modifier
+                                                .width(460.dp)
+                                                .fillMaxHeight(),
+                                            verticalArrangement = Arrangement.spacedBy(config.gap)
+                                        ) {
+                                            LcdDisplay(
+                                                expr = exprInput,
+                                                res = evalResult,
+                                                isShift = isShift,
+                                                isAlpha = isAlpha,
+                                                angleUnit = angleUnit,
+                                                viewModel = viewModel,
+                                                displayFontSize = config.displayFontSize,
+                                                displayResultFontSize = config.displayResultFontSize,
+                                                height = 160.dp
+                                            )
+
+                                            KeyboardScientificGrid(
+                                                viewModel = viewModel,
+                                                modifier = Modifier.weight(1f),
+                                                buttonHeight = config.buttonHeight,
+                                                buttonFontSize = config.buttonFontSize,
+                                                gap = config.gap
+                                            )
+                                        }
+
+                                        Column(
+                                            modifier = Modifier
+                                                .width(320.dp)
+                                                .fillMaxHeight(),
+                                            verticalArrangement = Arrangement.spacedBy(config.gap)
+                                        ) {
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .weight(1f)
+                                                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), RoundedCornerShape(12.dp)),
+                                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E242C))
+                                            ) {
+                                                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    Text("STUDENT MASTER GUIDE", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                                                    Text("• Use 2D tab for interactive curves analysis, extrema highlighting, and visual shaded integrations.", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
+                                                    Text("• Use 3D tab for gorgeous rotating graphs, camera projections, contour outlines, and horizontal slicing planes.", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
+                                                    Text("• Swipe tabs to configure Matrix algebraic parameters and calculate determinants/inverses on the fly.", fontSize = 11.sp, color = Color.White.copy(alpha = 0.8f))
+                                                }
+                                            }
+
+                                            Card(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(100.dp),
+                                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                                            ) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(12.dp),
+                                                    verticalArrangement = Arrangement.Center
+                                                ) {
+                                                    Text("CASIO cl-991EX Premium", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                                    Text("Adaptive Material Design 3 responsive grid active.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    else -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = if (config.maxContainerWidth != androidx.compose.ui.unit.Dp.Unspecified) {
+                                    Modifier.widthIn(max = config.maxContainerWidth).fillMaxHeight()
+                                } else {
+                                    Modifier.fillMaxSize()
+                                }
+                            ) {
+                                when (currentMode) {
+                                    CalculatorMode.MATRIX -> MatrixCalculatorView(viewModel = viewModel)
+                                    CalculatorMode.GRAPH_2D -> Graph2DView(viewModel = viewModel)
+                                    CalculatorMode.GRAPH_3D -> Graph3DView(viewModel = viewModel)
+                                    CalculatorMode.TUTORIAL -> EducationalTutorialView()
+                                    else -> {}
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -278,7 +773,10 @@ fun LcdDisplay(
     isAlpha: Boolean,
     angleUnit: AngleUnit,
     viewModel: CalculatorViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    displayFontSize: androidx.compose.ui.unit.TextUnit = 20.sp,
+    displayResultFontSize: androidx.compose.ui.unit.TextUnit = 28.sp,
+    height: androidx.compose.ui.unit.Dp = 130.dp
 ) {
     val historyList by viewModel.historyState.collectAsState()
     val memoryVal by viewModel.memoryValue.collectAsState()
@@ -286,7 +784,7 @@ fun LcdDisplay(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .height(130.dp),
+            .height(height),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFF4F3F7)), // elevation-1 card
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(1.dp)
@@ -355,7 +853,7 @@ fun LcdDisplay(
             Text(
                 text = if (historyList.isNotEmpty()) "${historyList.last().expression} = ${historyList.last().result}" else "",
                 fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
+                fontSize = (displayFontSize.value * 0.6).sp,
                 color = Color(0xFF74777F),
                 textAlign = TextAlign.End,
                 modifier = Modifier.fillMaxWidth()
@@ -365,7 +863,7 @@ fun LcdDisplay(
             Text(
                 text = expr.ifEmpty { "0" },
                 fontFamily = FontFamily.Monospace,
-                fontSize = 20.sp,
+                fontSize = displayFontSize,
                 color = Color(0xFF44474F), // on-surface-variant
                 textAlign = TextAlign.Start,
                 maxLines = 1,
@@ -376,7 +874,7 @@ fun LcdDisplay(
             Text(
                 text = res,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 28.sp,
+                fontSize = displayResultFontSize,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1C1B1F), // on-surface
                 textAlign = TextAlign.End,
@@ -426,7 +924,10 @@ fun getPrimaryDisplayLabel(key: String): String {
 @Composable
 fun KeyboardScientificGrid(
     viewModel: CalculatorViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    buttonHeight: androidx.compose.ui.unit.Dp = 48.dp,
+    buttonFontSize: androidx.compose.ui.unit.TextUnit = 13.sp,
+    gap: androidx.compose.ui.unit.Dp = 6.dp
 ) {
     val keyRows = listOf(
         "SHIFT", "ALPHA", "MC", "MR", "MS", "M+",
@@ -445,28 +946,27 @@ fun KeyboardScientificGrid(
     LazyVerticalGrid(
         columns = GridCells.Fixed(6),
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(gap),
+        verticalArrangement = Arrangement.spacedBy(gap)
     ) {
         items(keyRows) { k ->
-            // Determine button tier and styling of Material 3 layout
             val isNumber = k in setOf("7", "8", "9", "4", "5", "6", "1", "2", "3", "0", ".")
             val isOperator = k in setOf("+", "-", "*", "/", "=")
             val isAction = k in setOf("SHIFT", "ALPHA", "MC", "MR", "MS", "M+", "M-", "DEL", "AC", "%", "±", "CE", "C")
             
             val containerColor = when {
-                isNumber -> Color(0xFFE1E2EC) // surface-variant
-                isOperator -> Color(0xFFD3E3FD) // primary-container
+                isNumber -> Color(0xFFE1E2EC)
+                isOperator -> Color(0xFFD3E3FD)
                 isAction -> {
                     if (k == "SHIFT" && isShiftActive) {
-                        Color(0xFFFFB300) // active Shift accent
+                        Color(0xFFFFB300)
                     } else if (k == "ALPHA" && isAlphaActive) {
-                        Color(0xFF00FFCC) // active Alpha accent
+                        Color(0xFF00FFCC)
                     } else {
-                        Color(0xFFC4EED0) // tertiary-container
+                        Color(0xFFC4EED0)
                     }
                 }
-                else -> Color(0xFFC2D9FF) // secondary-container (Functions)
+                else -> Color(0xFFC2D9FF)
             }
 
             val textColor = when {
@@ -478,7 +978,7 @@ fun KeyboardScientificGrid(
 
             Box(
                 modifier = Modifier
-                    .height(48.dp)
+                    .height(buttonHeight)
                     .clip(RoundedCornerShape(8.dp))
                     .background(containerColor)
                     .clickable { viewModel.onKeyPressed(k) }
@@ -493,14 +993,14 @@ fun KeyboardScientificGrid(
                     if (secLabel.isNotEmpty()) {
                         Text(
                             text = secLabel,
-                            fontSize = 8.sp,
+                            fontSize = (buttonFontSize.value * 0.6).sp,
                             color = Color(0xFF74777F),
                             fontWeight = FontWeight.Medium
                         )
                     }
                     Text(
                         text = getPrimaryDisplayLabel(k),
-                        fontSize = if (k.length > 3) 11.sp else 13.sp,
+                        fontSize = if (k.length > 3) (buttonFontSize.value * 0.85).sp else buttonFontSize,
                         color = textColor,
                         fontWeight = FontWeight.Bold
                     )
@@ -511,13 +1011,16 @@ fun KeyboardScientificGrid(
 }
 
 @Composable
-fun HistoryPanel(viewModel: CalculatorViewModel) {
+fun HistoryPanel(
+    viewModel: CalculatorViewModel,
+    modifier: Modifier = Modifier,
+    listHeaderColor: Color = MaterialTheme.colorScheme.primary
+) {
     val historyList by viewModel.historyState.collectAsState()
 
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(200.dp)
             .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp)),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF181C1E)),
         shape = RoundedCornerShape(12.dp)
@@ -532,7 +1035,7 @@ fun HistoryPanel(viewModel: CalculatorViewModel) {
                     text = "CUSTOMIZABLE CALC HISTORY",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = listHeaderColor
                 )
 
                 if (historyList.isNotEmpty()) {
@@ -564,7 +1067,10 @@ fun HistoryPanel(viewModel: CalculatorViewModel) {
                     )
                 }
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
                     items(historyList) { item ->
                         Row(
                             modifier = Modifier

@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -32,6 +33,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -55,6 +57,21 @@ object GraphColors {
     val colorNames = listOf("Primary Blue", "Emerald Green", "Crimson Red", "Yellow Amber", "Cyan Teal", "Royal Purple")
 }
 
+fun getAdaptiveScale(range: Float): Float {
+    if (range <= 0f) return 1f
+    val rawStep = range / 10f
+    val log10 = log10(rawStep.toDouble())
+    val power = Math.pow(10.0, floor(log10)).toFloat()
+    val normalized = rawStep / power
+    val step = when {
+        normalized < 1.5f -> 1f * power
+        normalized < 3f -> 2f * power
+        normalized < 7f -> 5f * power
+        else -> 10f * power
+    }
+    return max(0.0001f, step)
+}
+
 @Composable
 fun Graph2DComposable(
     modifier: Modifier = Modifier,
@@ -75,6 +92,18 @@ fun Graph2DComposable(
         mutableStateListOf(true, true, false, false, false, false)
     }
 
+    // Customizable colors for slots
+    val slotColors = remember {
+        mutableStateListOf(
+            Color(0xFF1673E8), // f(x)
+            Color(0xFF2FA24E), // g(x)
+            Color(0xFFEA4335), // h(x)
+            Color(0xFFF39C12), // p(x)
+            Color(0xFF1ABC9C), // q(x)
+            Color(0xFF8E44AD)  // r(x)
+        )
+    }
+
     // Active plot mode: FUNC, POLAR, PARAM, SEQN, IMPLCT
     var plotMode by remember { mutableStateOf("FUNC") }
 
@@ -85,6 +114,14 @@ fun Graph2DComposable(
     var yMax by remember { mutableStateOf(10f) }
     var xScl by remember { mutableStateOf(1f) }
     var yScl by remember { mutableStateOf(1f) }
+
+    // Theme Mode Preference
+    var graphDarkTheme by remember { mutableStateOf(true) }
+
+    // Dialog & UI Selection States
+    var showColorPickerDialogForSlot by remember { mutableStateOf<Int?>(null) }
+    var showKeyboardHelperForSlot by remember { mutableStateOf<Int?>(null) }
+    var focusedSlot by remember { mutableStateOf<Int?>(null) }
 
     // Polar form theta limit
     var thetaMax by remember { mutableStateOf(2 * Math.PI.toFloat()) }
@@ -145,40 +182,100 @@ fun Graph2DComposable(
         }
     }
 
+    // Format Math styled preview
+    fun formatMathPreview(expr: String): String {
+        if (expr.isEmpty()) return ""
+        return expr
+            .replace("*", "·")
+            .replace("/", " ÷ ")
+            .replace("^2", "²")
+            .replace("^3", "³")
+            .replace("^", " ^ ")
+            .replace("pi", "π")
+            .replace("theta", "θ")
+    }
+
+    // Curve intersections solver
+    fun findIntersections(): List<Offset> {
+        val intersects = mutableListOf<Offset>()
+        val activeFuncs = functions.mapIndexed { idx, f -> Pair(idx, f) }
+            .filter { it.second.isNotEmpty() && visibleStates[it.first] }
+        if (activeFuncs.size < 2) return emptyList()
+
+        val steps = 40
+        val dx = (xMax - xMin) / steps
+        for (i in 0 until activeFuncs.size) {
+            for (j in i + 1 until activeFuncs.size) {
+                val f1 = activeFuncs[i].second
+                val f2 = activeFuncs[j].second
+                for (step in 0 until steps) {
+                    val xa = xMin + step * dx
+                    val xb = xa + dx
+                    val diffA = evaluateSafe(f1, xa.toDouble()) - evaluateSafe(f2, xa.toDouble())
+                    val diffB = evaluateSafe(f1, xb.toDouble()) - evaluateSafe(f2, xb.toDouble())
+                    if (!diffA.isNaN() && !diffB.isNaN() && diffA * diffB <= 0.0) {
+                        val t = if ((diffB - diffA) != 0.0) (abs(diffA) / (abs(diffA) + abs(diffB))).toFloat() else 0.5f
+                        val intersectX = xa + t * dx
+                        val intersectY = evaluateSafe(f1, intersectX.toDouble())
+                        if (!intersectY.isNaN()) {
+                            intersects.add(Offset(intersectX, intersectY.toFloat()))
+                        }
+                    }
+                }
+            }
+        }
+        return intersects.distinctBy { round(it.x * 100f) }
+    }
+
     // Window config panel UI toggle
     var showWindowDialog by remember { mutableStateOf(false) }
 
+    // Dynamic colours based on theme
+    val canvasBg = if (graphDarkTheme) Color(0xFF141318) else Color(0xFFF7F8FC)
+    val gridColor = if (graphDarkTheme) Color(0xFF74777F).copy(alpha = 0.15f) else Color(0xFF74777F).copy(alpha = 0.25f)
+    val axisColor = if (graphDarkTheme) Color(0xFFE1E2EC).copy(alpha = 0.8f) else Color(0xFF1B1B1F).copy(alpha = 0.8f)
+    val labelColor = if (graphDarkTheme) Color(0xFFC4C6D0) else Color(0xFF43474E)
+
     Column(modifier = modifier.fillMaxSize()) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFFAFBFF)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1.1f)
+                .weight(1.2f)
                 .padding(bottom = 8.dp)
         ) {
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF141318))
+                    .background(canvasBg)
+                    // Dual-finger Pan & Zoom Transform Gesture Block
                     .pointerInput(xMin, xMax, yMin, yMax, traceActive) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
+                        detectTransformGestures { _, pan, zoom, _ ->
                             if (traceActive) {
-                                // Drag changes trace position
                                 val width = size.width
                                 val dx = (xMax - xMin) / width
-                                traceX = (traceX + dragAmount.x * dx).coerceIn(xMin.toDouble(), xMax.toDouble())
+                                traceX = (traceX + pan.x * dx).coerceIn(xMin.toDouble(), xMax.toDouble())
                             } else {
-                                // Pan viewport
                                 val width = size.width
                                 val height = size.height
-                                val dx = (xMax - xMin) / width * dragAmount.x
-                                val dy = (yMax - yMin) / height * dragAmount.y
-                                xMin -= dx
-                                xMax -= dx
-                                yMin += dy
-                                yMax += dy
+
+                                val midX = (xMin + xMax) / 2f
+                                val midY = (yMin + yMax) / 2f
+                                val rangeX = (xMax - xMin)
+                                val rangeY = (yMax - yMin)
+
+                                val zoomFactor = if (zoom != 1f) 1f / zoom else 1f
+                                val newRangeX = (rangeX * zoomFactor).coerceIn(0.1f, 1000f)
+                                val newRangeY = (rangeY * zoomFactor).coerceIn(0.1f, 1000f)
+
+                                val dx = (newRangeX / width) * pan.x
+                                val dy = (newRangeY / height) * pan.y
+
+                                xMin = midX - newRangeX / 2f - dx
+                                xMax = midX + newRangeX / 2f - dx
+                                yMin = midY - newRangeY / 2f + dy
+                                yMax = midY + newRangeY / 2f + dy
                             }
                         }
                     }
@@ -191,6 +288,9 @@ fun Graph2DComposable(
                         }
                     }
             ) {
+                val containerWidth = maxWidth.value
+                val containerHeight = maxHeight.value
+
                 // Main Graphics Plot Canvas
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
@@ -199,47 +299,73 @@ fun Graph2DComposable(
                     // Coordinate transforms
                     fun toScreenX(x: Float): Float = ((x - xMin) / (xMax - xMin)) * w
                     fun toScreenY(y: Float): Float = h - (((y - yMin) / (yMax - yMin)) * h)
-                    fun toMathX(sx: Float): Float = xMin + (sx / w) * (xMax - xMin)
-                    fun toMathY(sy: Float): Float = yMin + ((h - sy) / h) * (yMax - yMin)
 
                     val originScreenX = toScreenX(0f)
                     val originScreenY = toScreenY(0f)
 
-                    // 1. GRID LINES
+                    // 1. GRID LINES & TICKS
                     if (toggleGrid) {
+                        val effectiveXScl = if (xScl <= 0f || (xMax - xMin) / xScl > 50f) {
+                            getAdaptiveScale(xMax - xMin)
+                        } else {
+                            xScl
+                        }
+
+                        val effectiveYScl = if (yScl <= 0f || (yMax - yMin) / yScl > 50f) {
+                            getAdaptiveScale(yMax - yMin)
+                        } else {
+                            yScl
+                        }
+
                         val gridLineEffect = if (lineStyle == "DOTTED") {
                             PathEffect.dashPathEffect(floatArrayOf(3f, 6f), 0f)
                         } else null
 
                         // Major & minor grids base on resolution
-                        var currX = (floor(xMin / xScl) * xScl).toFloat()
+                        var currX = (floor(xMin / effectiveXScl) * effectiveXScl).toFloat()
                         while (currX <= xMax) {
                             val sx = toScreenX(currX)
                             if (currX != 0f) {
                                 drawLine(
-                                    color = Color(0xFF74777F).copy(alpha = 0.15f),
+                                    color = gridColor,
                                     start = Offset(sx, 0f),
                                     end = Offset(sx, h),
                                     strokeWidth = 1.dp.toPx(),
                                     pathEffect = gridLineEffect
                                 )
+                                // Vertical axis ticks
+                                val syTick = originScreenY.coerceIn(0f, h)
+                                drawLine(
+                                    color = axisColor.copy(alpha = 0.5f),
+                                    start = Offset(sx, syTick - 4.dp.toPx()),
+                                    end = Offset(sx, syTick + 4.dp.toPx()),
+                                    strokeWidth = 1.5.dp.toPx()
+                                )
                             }
-                            currX += xScl
+                            currX += effectiveXScl
                         }
 
-                        var currY = (floor(yMin / yScl) * yScl).toFloat()
+                        var currY = (floor(yMin / effectiveYScl) * effectiveYScl).toFloat()
                         while (currY <= yMax) {
                             val sy = toScreenY(currY)
                             if (currY != 0f) {
                                 drawLine(
-                                    color = Color(0xFF74777F).copy(alpha = 0.15f),
+                                    color = gridColor,
                                     start = Offset(0f, sy),
                                     end = Offset(w, sy),
                                     strokeWidth = 1.dp.toPx(),
                                     pathEffect = gridLineEffect
                                 )
+                                // Horizontal axis ticks
+                                val sxTick = originScreenX.coerceIn(0f, w)
+                                drawLine(
+                                    color = axisColor.copy(alpha = 0.5f),
+                                    start = Offset(sxTick - 4.dp.toPx(), sy),
+                                    end = Offset(sxTick + 4.dp.toPx(), sy),
+                                    strokeWidth = 1.5.dp.toPx()
+                                )
                             }
-                            currY += yScl
+                            currY += effectiveYScl
                         }
                     }
 
@@ -248,7 +374,7 @@ fun Graph2DComposable(
                         // X Axis
                         if (originScreenY in 0f..h) {
                             drawLine(
-                                color = Color(0xFF74777F).copy(alpha = 0.7f),
+                                color = axisColor,
                                 start = Offset(0f, originScreenY),
                                 end = Offset(w, originScreenY),
                                 strokeWidth = 2.dp.toPx()
@@ -261,14 +387,14 @@ fun Graph2DComposable(
                                     lineTo(w - 12.dp.toPx(), originScreenY + 5.dp.toPx())
                                     close()
                                 },
-                                color = Color(0xFF74777F).copy(alpha = 0.7f)
+                                color = axisColor
                             )
                         }
 
                         // Y Axis
                         if (originScreenX in 0f..w) {
                             drawLine(
-                                color = Color(0xFF74777F).copy(alpha = 0.7f),
+                                color = axisColor,
                                 start = Offset(originScreenX, 0f),
                                 end = Offset(originScreenX, h),
                                 strokeWidth = 2.dp.toPx()
@@ -281,7 +407,7 @@ fun Graph2DComposable(
                                     lineTo(originScreenX + 5.dp.toPx(), 12.dp.toPx())
                                     close()
                                 },
-                                color = Color(0xFF74777F).copy(alpha = 0.7f)
+                                color = axisColor
                             )
                         }
                     }
@@ -292,7 +418,6 @@ fun Graph2DComposable(
                             functions.forEachIndexed { sIdx, rawExpr ->
                                 if (visibleStates[sIdx] && rawExpr.isNotEmpty()) {
                                     val path = Path()
-                                    var first = true
                                     val totalSteps = 240
                                     val dx = (xMax - xMin) / totalSteps
 
@@ -338,7 +463,7 @@ fun Graph2DComposable(
                                         }
                                         drawPath(
                                             path = fillPath,
-                                            color = GraphColors.colors[sIdx].copy(alpha = 0.15f)
+                                            color = slotColors[sIdx].copy(alpha = 0.15f)
                                         )
                                     }
 
@@ -348,11 +473,11 @@ fun Graph2DComposable(
                                         "DOTTED" -> PathEffect.dashPathEffect(floatArrayOf(4f, 10f), 0f)
                                         else -> null
                                     }
-                                    val thick = if (lineStyle == "THICK") 4.5.dp.toPx() else 2.5.dp.toPx()
+                                    val thick = if (lineStyle == "THICK") 5.dp.toPx() else 3.dp.toPx()
 
                                     drawPath(
                                         path = path,
-                                        color = GraphColors.colors[sIdx],
+                                        color = slotColors[sIdx],
                                         style = Stroke(width = thick, pathEffect = effect)
                                     )
                                 }
@@ -387,15 +512,14 @@ fun Graph2DComposable(
                                     }
                                     drawPath(
                                         path = path,
-                                        color = GraphColors.colors[sIdx],
-                                        style = Stroke(width = 3.dp.toPx())
+                                        color = slotColors[sIdx],
+                                        style = Stroke(width = 3.5.dp.toPx())
                                     )
                                 }
                             }
                         }
 
                         "PARAM" -> {
-                            // Slot 0 holds x(t), Slot 1 holds y(t)
                             val f1 = functions.getOrNull(0) ?: ""
                             val f2 = functions.getOrNull(1) ?: ""
                             if (f1.isNotEmpty() && f2.isNotEmpty()) {
@@ -422,22 +546,21 @@ fun Graph2DComposable(
                                 }
                                 drawPath(
                                     path = path,
-                                    color = GraphColors.colors[0],
-                                    style = Stroke(width = 3.dp.toPx())
+                                    color = slotColors[0],
+                                    style = Stroke(width = 3.5.dp.toPx())
                                 )
                             }
                         }
 
                         "SEQN" -> {
-                            // discrete sequences plot dots
                             functions.forEachIndexed { sIdx, rawExpr ->
                                 if (visibleStates[sIdx] && rawExpr.isNotEmpty()) {
                                     for (n in 1..15) {
                                         val evalTerm = evaluateSafe(rawExpr, n.toDouble(), mode = "SEQN")
                                         if (!evalTerm.isNaN()) {
                                             drawCircle(
-                                                color = GraphColors.colors[sIdx],
-                                                radius = 5.dp.toPx(),
+                                                color = slotColors[sIdx],
+                                                radius = 6.dp.toPx(),
                                                 center = Offset(toScreenX(n.toFloat()), toScreenY(evalTerm.toFloat()))
                                             )
                                         }
@@ -447,7 +570,6 @@ fun Graph2DComposable(
                         }
 
                         "IMPLCT" -> {
-                            // F(x, y) = 0 contour renderer using marching cells estimate
                             val rawExpr = functions.firstOrNull { it.isNotEmpty() } ?: ""
                             if (rawExpr.isNotEmpty()) {
                                 val gridW = 50
@@ -459,13 +581,11 @@ fun Graph2DComposable(
                                     val x_v = xMin + i * dx
                                     for (j in 0 until gridH) {
                                         val y_v = yMin + j * dy
-                                        // Evaluate at cell corners
                                         val val0 = evaluateSafe(rawExpr, x_v.toDouble(), y_v.toDouble())
                                         val val1 = evaluateSafe(rawExpr, (x_v + dx).toDouble(), y_v.toDouble())
                                         val val2 = evaluateSafe(rawExpr, x_v.toDouble(), (y_v + dy).toDouble())
 
                                         if (!val0.isNaN() && !val1.isNaN() && !val2.isNaN()) {
-                                            // Look for zero crossing
                                             if ((val0 * val1 < 0) || (val0 * val2 < 0)) {
                                                 drawRect(
                                                     color = Color(0xFF24C1E0).copy(alpha = 0.8f),
@@ -480,9 +600,22 @@ fun Graph2DComposable(
                         }
                     }
 
-                    // 4. METADATA LABELS
-                    if (toggleLabels) {
-                        // Render numeric steps bounds representation
+                    // 4. CURVE INTERSECTION HIGHLIGHTS
+                    if (showIntersections) {
+                        val crossings = findIntersections()
+                        crossings.forEach { pt ->
+                            drawCircle(
+                                color = Color(0xFFFF5252),
+                                radius = 6.dp.toPx(),
+                                center = Offset(toScreenX(pt.x), toScreenY(pt.y))
+                            )
+                            drawCircle(
+                                color = Color(0xFFFF5252).copy(alpha = 0.3f),
+                                radius = 10.dp.toPx(),
+                                style = Stroke(width = 1.5.dp.toPx()),
+                                center = Offset(toScreenX(pt.x), toScreenY(pt.y))
+                            )
+                        }
                     }
 
                     // 5. TRACE CURSORS SNAP
@@ -494,15 +627,14 @@ fun Graph2DComposable(
                                 val txScreen = toScreenX(traceX.toFloat())
                                 val tyScreen = toScreenY(traceYValue.toFloat())
 
-                                // Dynamic cursor Snapped Indicator (Primary Active Color)
                                 drawCircle(
-                                    color = GraphColors.colors[activeTraceSlot],
+                                    color = slotColors[activeTraceSlot],
                                     radius = 7.dp.toPx(),
                                     center = Offset(txScreen, tyScreen)
                                 )
 
                                 drawLine(
-                                    color = Color(0xFFC4EED0).copy(alpha = 0.4f),
+                                    color = slotColors[activeTraceSlot].copy(alpha = 0.5f),
                                     start = Offset(txScreen, 0f),
                                     end = Offset(txScreen, h),
                                     strokeWidth = 1.dp.toPx(),
@@ -510,7 +642,7 @@ fun Graph2DComposable(
                                 )
 
                                 drawLine(
-                                    color = Color(0xFFC4EED0).copy(alpha = 0.4f),
+                                    color = slotColors[activeTraceSlot].copy(alpha = 0.5f),
                                     start = Offset(0f, tyScreen),
                                     end = Offset(w, tyScreen),
                                     strokeWidth = 1.dp.toPx(),
@@ -550,7 +682,6 @@ fun Graph2DComposable(
                                 }
                             }
                             "BOXPLOT" -> {
-                                // Q1=3, Med=5, Q3=7, Min=1, Max=9
                                 val scrMin = toScreenX(1f)
                                 val scrMax = toScreenX(9f)
                                 val scrQ1 = toScreenX(3f)
@@ -558,10 +689,8 @@ fun Graph2DComposable(
                                 val scrMed = toScreenX(5f)
                                 val centerY = h / 2
 
-                                // Whiskers
                                 drawLine(Color(0xFF34A853), Offset(scrMin, centerY), Offset(scrQ1, centerY), 2.5.dp.toPx())
                                 drawLine(Color(0xFF34A853), Offset(scrQ3, centerY), Offset(scrMax, centerY), 2.5.dp.toPx())
-                                // Box
                                 drawRect(
                                     color = Color(0xFF34A853).copy(alpha = 0.2f),
                                     topLeft = Offset(scrQ1, centerY - 25.dp.toPx()),
@@ -573,11 +702,9 @@ fun Graph2DComposable(
                                     size = Size(scrQ3 - scrQ1, 50.dp.toPx()),
                                     style = Stroke(2.dp.toPx())
                                 )
-                                // Median
                                 drawLine(Color(0xFFEA4335), Offset(scrMed, centerY - 25.dp.toPx()), Offset(scrMed, centerY + 25.dp.toPx()), 3.dp.toPx())
                             }
                             "REGRESS" -> {
-                                // Linear Regression overlay
                                 val sx1 = toScreenX(0f)
                                 val sy1 = toScreenY(1f)
                                 val sx2 = toScreenX(8f)
@@ -591,41 +718,44 @@ fun Graph2DComposable(
                                 )
                             }
                             "VECTOR" -> {
-                                // Vortex field F(x, y) = (-y, x)
-                                val stepSize = 1.5f
-                                var vx = xMin
-                                while (vx <= xMax) {
-                                    var vy = yMin
-                                    while (vy <= yMax) {
-                                        val vLen = sqrt(vx * vx + vy * vy)
-                                        if (vLen > 0.1f) {
-                                            val dx = (-vy / vLen) * 0.5f
-                                            val dy = (vx / vLen) * 0.5f
+                                val rx = xMax - xMin
+                                val ry = yMax - yMin
+                                if (rx > 0 && ry > 0) {
+                                    val stepX = max(0.5f, rx / 20f)
+                                    val stepY = max(0.5f, ry / 20f)
+                                    var vx = xMin
+                                    while (vx <= xMax) {
+                                        var vy = yMin
+                                        while (vy <= yMax) {
+                                            val vLen = sqrt(vx * vx + vy * vy)
+                                            if (vLen > 0.1f) {
+                                                val dx = (-vy / vLen) * (stepX * 0.35f)
+                                                val dy = (vx / vLen) * (stepY * 0.35f)
 
-                                            val tX = toScreenX(vx)
-                                            val tY = toScreenY(vy)
-                                            val endX = toScreenX(vx + dx)
-                                            val endY = toScreenY(vy + dy)
+                                                val tX = toScreenX(vx)
+                                                val tY = toScreenY(vy)
+                                                val endX = toScreenX(vx + dx)
+                                                val endY = toScreenY(vy + dy)
 
-                                            drawLine(
-                                                color = Color(0xFF24C1E0).copy(alpha = 0.5f),
-                                                start = Offset(tX, tY),
-                                                end = Offset(endX, endY),
-                                                strokeWidth = 1.2.dp.toPx(),
-                                                cap = StrokeCap.Round
-                                            )
+                                                drawLine(
+                                                    color = Color(0xFF24C1E0).copy(alpha = 0.5f),
+                                                    start = Offset(tX, tY),
+                                                    end = Offset(endX, endY),
+                                                    strokeWidth = 1.2.dp.toPx(),
+                                                    cap = StrokeCap.Round
+                                                )
+                                            }
+                                            vy += stepY
                                         }
-                                        vy += stepSize
+                                        vx += stepX
                                     }
-                                    vx += stepSize
                                 }
                             }
                         }
                     }
 
-                    // 7. ANALYSIS HIGHLIGHT OVERLAYS
+                    // 7. ANALYTICAL INDICATORS
                     if (showZeros) {
-                        // Roots zeros finding algorithm over x range
                         val activeExpr = functions[activeTraceSlot]
                         if (activeExpr.isNotEmpty()) {
                             val activeProcessed = preprocessInputExpr(activeExpr, "FUNC")
@@ -709,105 +839,267 @@ fun Graph2DComposable(
                     }
                 }
 
-                // Interactive zoom floats panel (M3 Simple FABs)
-                Column(
+                // --- COMPOSE OVERLAYS INSIDE GRAPH CARD ---
+
+                // A. Range bounds watermark layout (top-left)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = String.format("Range: [%d, %d] × [%d, %d]", xMin.toInt(), xMax.toInt(), yMin.toInt(), yMax.toInt()),
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                // B. Dynamic Floating Axis Chip Labels
+                if (toggleAxes) {
+                    val originScrX = ((0f - xMin) / (xMax - xMin)) * containerWidth
+                    val originScrY = (1f - ((0f - yMin) / (yMax - yMin))) * containerHeight
+
+                    // Y label floating near Top of Y Axis
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset(
+                                x = originScrX.coerceIn(8f, containerWidth - 40f).dp,
+                                y = 8.dp
+                            )
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text("y", color = labelColor, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    }
+
+                    // X label floating near Right of X Axis
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset(
+                                x = (containerWidth - 24f).dp,
+                                y = originScrY.coerceIn(8f, containerHeight - 32f).dp
+                            )
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+                            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text("x", color = labelColor, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+
+                // C. Hover Coordinate Crosshair Tooltip
+                if (traceActive) {
+                    val activeExpr = functions[activeTraceSlot]
+                    if (activeExpr.isNotEmpty()) {
+                        val traceYValue = evaluateSafe(activeExpr, traceX, mode = plotMode)
+                        if (!traceYValue.isNaN()) {
+                            val xPos = (((traceX.toFloat() - xMin) / (xMax - xMin)) * containerWidth).coerceIn(10f, containerWidth - 130f)
+                            val yPos = ((1f - ((traceYValue.toFloat() - yMin) / (yMax - yMin))) * containerHeight).coerceIn(40f, containerHeight - 10f)
+
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .offset(x = xPos.dp, y = (yPos - 45f).dp)
+                                    .background(Color.Black.copy(alpha = 0.85f), RoundedCornerShape(6.dp))
+                                    .border(0.5.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = String.format("(%.3f, %.3f)", traceX, traceYValue),
+                                        color = Color(0xFF00FFCC),
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                    val deriv = (evaluateSafe(activeExpr, traceX + 1e-4, mode = plotMode) - evaluateSafe(activeExpr, traceX - 1e-4, mode = plotMode)) / 2e-4
+                                    Text(
+                                        text = String.format("Slope: %.3f", deriv),
+                                        color = Color(0xFFFFCC00),
+                                        fontSize = 8.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // D. Dark/Light theme quick chooser for Graph Canvas
+                IconButton(
+                    onClick = { graphDarkTheme = !graphDarkTheme },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(32.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = "Toggle Canvas Theme",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // E. Stacked Unified Capsule FAB control panel (In / Out / FIT / Bounds)
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(12.dp)
+                        .width(44.dp)
                 ) {
-                    FloatingActionButton(
-                        onClick = {
-                            val rangeX = (xMax - xMin) / 1.5f
-                            val rangeY = (yMax - yMin) / 1.5f
-                            val midX = (xMin + xMax) / 2
-                            val midY = (yMin + yMax) / 2
-                            xMin = midX - rangeX / 2
-                            xMax = midX + rangeX / 2
-                            yMin = midY - rangeY / 2
-                            yMax = midY + rangeY / 2
-                        },
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(40.dp),
-                        shape = CircleShape
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(vertical = 4.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Add, contentDescription = "Zoom In", tint = MaterialTheme.colorScheme.onPrimaryContainer)
-                    }
+                        IconButton(
+                            onClick = {
+                                val rangeX = (xMax - xMin) / 1.5f
+                                val rangeY = (yMax - yMin) / 1.5f
+                                val midX = (xMin + xMax) / 2
+                                val midY = (yMin + yMax) / 2
+                                xMin = midX - rangeX / 2
+                                xMax = midX + rangeX / 2
+                                yMin = midY - rangeY / 2
+                                yMax = midY + rangeY / 2
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = "Zoom In", tint = MaterialTheme.colorScheme.primary)
+                        }
 
-                    FloatingActionButton(
-                        onClick = {
-                            val rangeX = (xMax - xMin) * 1.5f
-                            val rangeY = (yMax - yMin) * 1.5f
-                            val midX = (xMin + xMax) / 2
-                            val midY = (yMin + yMax) / 2
-                            xMin = midX - rangeX / 2
-                            xMax = midX + rangeX / 2
-                            yMin = midY - rangeY / 2
-                            yMax = midY + rangeY / 2
-                        },
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        modifier = Modifier.size(40.dp),
-                        shape = CircleShape
-                    ) {
-                        Text("-", fontSize = 20.sp, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
-                    }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), modifier = Modifier.padding(horizontal = 6.dp))
 
-                    FloatingActionButton(
-                        onClick = { showWindowDialog = true },
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                        modifier = Modifier.size(40.dp),
-                        shape = CircleShape
-                    ) {
-                        Icon(imageVector = Icons.Default.Settings, contentDescription = "Window Boundaries")
+                        IconButton(
+                            onClick = {
+                                val rangeX = (xMax - xMin) * 1.5f
+                                val rangeY = (yMax - yMin) * 1.5f
+                                val midX = (xMin + xMax) / 2
+                                val midY = (yMin + yMax) / 2
+                                xMin = midX - rangeX / 2
+                                xMax = midX + rangeX / 2
+                                yMin = midY - rangeY / 2
+                                yMax = midY + rangeY / 2
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Text("-", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), modifier = Modifier.padding(horizontal = 6.dp))
+
+                        IconButton(
+                            onClick = {
+                                xMin = -10f; xMax = 10f; yMin = -10f; yMax = 10f; xScl = 1f; yScl = 1f
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Text("FIT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), modifier = Modifier.padding(horizontal = 6.dp))
+
+                        IconButton(
+                            onClick = { showWindowDialog = true },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = "Boundaries Configuration", tint = MaterialTheme.colorScheme.primary)
+                        }
                     }
                 }
             }
         }
 
-        // Segmented Plot Mode Control Row
-        LazyRow(
+        // Plot mode selector chips
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
+                .padding(vertical = 6.dp, horizontal = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             val modesList = listOf(
-                Pair("FUNC", "FUNC y=f(x)"),
-                Pair("POLAR", "POLAR r=f(θ)"),
-                Pair("PARAM", "PARAM t"),
-                Pair("SEQN", "SEQN u(n)"),
-                Pair("IMPLCT", "IMPLCT F(x,y)")
+                Pair("FUNC", "y=f(x)"),
+                Pair("POLAR", "r=f(θ)"),
+                Pair("PARAM", "Param t"),
+                Pair("SEQN", "u(n)"),
+                Pair("IMPLCT", "F(x,y)=0")
             )
-            items(modesList) { (key, display) ->
+            modesList.forEach { (key, display) ->
                 val isSel = plotMode == key
-                Button(
-                    onClick = { plotMode = key },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isSel) MaterialTheme.colorScheme.primary else Color(0xFFE1E2EC),
-                        contentColor = if (isSel) Color.White else Color(0xFF1E2421)
-                    ),
-                    modifier = Modifier.height(34.dp),
-                    shape = RoundedCornerShape(18.dp)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            if (isSel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        )
+                        .border(
+                            1.dp,
+                            if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                            RoundedCornerShape(18.dp)
+                        )
+                        .clickable { plotMode = key }
+                        .padding(horizontal = 2.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(display, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = display,
+                        fontSize = 9.sp,
+                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         }
 
-        // Sub controls and inputs section divided by Tabs
+        // Material 3 sub tabs navigations
         var subTabSelection by remember { mutableStateOf(0) }
-        val subTabs = listOf("Slots Form", "Analysis & Trace", "Render settings", "Special Plots")
+        val subTabs = listOf(
+            Triple(0, "Slots Form", Icons.Default.List),
+            Triple(1, "Trace Analysis", Icons.Default.Search),
+            Triple(2, "Style settings", Icons.Default.Settings),
+            Triple(3, "Special Plots", Icons.Default.Star)
+        )
 
         TabRow(
             selectedTabIndex = subTabSelection,
             containerColor = Color.Transparent,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            divider = {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            }
         ) {
-            subTabs.forEachIndexed { sIdx, name ->
+            subTabs.forEach { (sIdx, name, icon) ->
                 Tab(
                     selected = subTabSelection == sIdx,
                     onClick = { subTabSelection = sIdx },
-                    text = { Text(name, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                    icon = { Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    text = {
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontSize = 11.sp,
+                                fontWeight = if (subTabSelection == sIdx) FontWeight.Bold else FontWeight.Medium
+                            )
+                        )
+                    },
+                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    unselectedContentColor = MaterialTheme.colorScheme.outline
                 )
             }
         }
@@ -816,69 +1108,147 @@ fun Graph2DComposable(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(top = 6.dp)
+                .padding(top = 8.dp)
         ) {
             when (subTabSelection) {
                 0 -> {
-                    // Function slots configuration
+                    // UPGRADED FEATURE-RICH SLOTS FORM
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         itemsIndexed(functions) { fIdx, expr ->
+                            val isFocused = focusedSlot == fIdx
+                            val isEmpty = expr.isEmpty()
+                            val isCollapsed = isEmpty && !isFocused
+
+                            val slotLabel = when (plotMode) {
+                                "FUNC" -> listOf("f(x)", "g(x)", "h(x)", "p(x)", "q(x)", "r(x)")[fIdx]
+                                "POLAR" -> "r$fIdx(θ)"
+                                "PARAM" -> if (fIdx == 0) "x₁(t)" else if (fIdx == 1) "y₁(t)" else "g$fIdx(t)"
+                                "SEQN" -> "u$fIdx(n)"
+                                else -> "F(x,y)"
+                            }
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color(0xFFF1F3F9), RoundedCornerShape(10.dp))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    .height(if (isCollapsed) 44.dp else 60.dp)
+                                    .background(
+                                        if (isFocused) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.08f)
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .border(
+                                        width = if (isFocused) 1.5.dp else 1.dp,
+                                        color = if (isFocused) MaterialTheme.colorScheme.primary 
+                                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable {
+                                        focusedSlot = fIdx
+                                    }
+                                    .padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                // Drag handle on left
+                                Icon(
+                                    imageVector = Icons.Default.Menu,
+                                    contentDescription = "Reorder handle",
+                                    tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(20.dp).padding(end = 4.dp)
+                                )
+
+                                // Custom Tappable color selector dot
                                 Box(
                                     modifier = Modifier
-                                        .size(16.dp)
-                                        .background(GraphColors.colors[fIdx], CircleShape)
+                                        .size(20.dp)
+                                        .background(slotColors[fIdx], CircleShape)
+                                        .border(2.dp, Color.White, CircleShape)
+                                        .clickable {
+                                            showColorPickerDialogForSlot = fIdx
+                                        }
                                 )
 
-                                val slotLabel = when (plotMode) {
-                                    "FUNC" -> listOf("f(x)", "g(x)", "h(x)", "p(x)", "q(x)", "r(x)")[fIdx]
-                                    "POLAR" -> "r$fIdx(θ)"
-                                    "PARAM" -> if (fIdx == 0) "x₁(t)" else if (fIdx == 1) "y₁(t)" else "g$fIdx(t)"
-                                    "SEQN" -> "u$fIdx(n)"
-                                    else -> "F(x,y)"
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                if (isCollapsed) {
+                                    Text(
+                                        text = "$slotLabel = (empty)",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.outline,
+                                        modifier = Modifier.weight(1f).padding(start = 4.dp)
+                                    )
+                                } else {
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        val mathStyle = formatMathPreview(expr)
+                                        if (mathStyle.isNotEmpty()) {
+                                            Text(
+                                                text = mathStyle,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = slotColors[fIdx],
+                                                modifier = Modifier.padding(start = 4.dp)
+                                            )
+                                        }
+
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = "$slotLabel = ",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(end = 4.dp)
+                                            )
+                                            OutlinedTextField(
+                                                value = expr,
+                                                onValueChange = { newVal -> functions[fIdx] = newVal },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .onFocusChanged { state ->
+                                                        if (state.isFocused) {
+                                                            focusedSlot = fIdx
+                                                        }
+                                                    },
+                                                singleLine = true,
+                                                trailingIcon = {
+                                                    IconButton(
+                                                        onClick = { showKeyboardHelperForSlot = fIdx },
+                                                        modifier = Modifier.size(24.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Settings,
+                                                            contentDescription = "Symbol helper",
+                                                            tint = MaterialTheme.colorScheme.outline,
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                    }
+                                                },
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedBorderColor = Color.Transparent,
+                                                    unfocusedBorderColor = Color.Transparent,
+                                                    disabledBorderColor = Color.Transparent
+                                                ),
+                                                textStyle = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                        }
+                                    }
                                 }
 
-                                Text(
-                                    text = "$slotLabel =",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.widthIn(min = 40.dp)
-                                )
-
-                                OutlinedTextField(
-                                    value = expr,
-                                    onValueChange = { functions[fIdx] = it },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(48.dp)
-                                        .testTag("expression_slot_$fIdx"),
-                                    singleLine = true,
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        unfocusedBorderColor = Color.LightGray,
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary
-                                    ),
-                                    textStyle = MaterialTheme.typography.bodySmall,
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-
+                                // Eye Visibility Toggles
                                 IconButton(
                                     onClick = { visibleStates[fIdx] = !visibleStates[fIdx] },
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(44.dp)
                                 ) {
                                     Icon(
                                         imageVector = if (visibleStates[fIdx]) Icons.Default.CheckCircle else Icons.Default.Clear,
                                         contentDescription = "Toggle visibility",
-                                        tint = if (visibleStates[fIdx]) MaterialTheme.colorScheme.primary else Color.Gray
+                                        tint = if (visibleStates[fIdx]) slotColors[fIdx] else Color.Gray,
+                                        modifier = Modifier.size(20.dp)
                                     )
                                 }
                             }
@@ -887,7 +1257,7 @@ fun Graph2DComposable(
                 }
 
                 1 -> {
-                    // Trace & Analytical operations
+                    // TRACE & DETECT CROSSINGS INTERSECTORS
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -895,7 +1265,7 @@ fun Graph2DComposable(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Card(
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F3F9))
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
                         ) {
                             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
@@ -922,7 +1292,7 @@ fun Graph2DComposable(
                                                 Button(
                                                     onClick = { activeTraceSlot = fIdx },
                                                     colors = ButtonDefaults.buttonColors(
-                                                        containerColor = if (activeTraceSlot == fIdx) GraphColors.colors[fIdx] else Color.LightGray
+                                                        containerColor = if (activeTraceSlot == fIdx) slotColors[fIdx] else Color.LightGray
                                                     ),
                                                     modifier = Modifier.height(28.dp),
                                                     contentPadding = PaddingValues(horizontal = 6.dp)
@@ -954,7 +1324,6 @@ fun Graph2DComposable(
                                                 color = Color(0xFF00FFCC),
                                                 fontSize = 12.sp
                                             )
-                                            // Numerical derivative dy/dx
                                             val deriv = (evaluateSafe(currTraceExpr, traceX + 1e-4, mode = plotMode) - evaluateSafe(currTraceExpr, traceX - 1e-4, mode = plotMode)) / 2e-4
                                             Text(
                                                 text = String.format("Slope dy/dx: %s", if (deriv.isNaN()) "Undefined" else String.format("%.5f", deriv)),
@@ -968,7 +1337,54 @@ fun Graph2DComposable(
                             }
                         }
 
-                        // Analytic action row toggle
+                        // Curve Crossings badge finder list
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text("Auto-Detect Curve Crossings", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Text("Plot points of intersection on graph", fontSize = 10.sp, color = Color.Gray)
+                                    }
+                                    Switch(
+                                        checked = showIntersections,
+                                        onCheckedChange = { showIntersections = it }
+                                    )
+                                }
+
+                                if (showIntersections) {
+                                    val crossingsList = findIntersections()
+                                    if (crossingsList.isEmpty()) {
+                                        Text("No intersections detected in current range limits.", fontSize = 11.sp, color = Color.Gray)
+                                    } else {
+                                        Text("Intersections detected:", fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                                        crossingsList.forEach { pt ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(6.dp))
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = String.format("• Local crossing at: (%.4f, %.4f)", pt.x, pt.y),
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Analysis toggles
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -979,7 +1395,7 @@ fun Graph2DComposable(
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 contentPadding = PaddingValues(2.dp)
                             ) {
-                                Text("ZERO (ROOT)", fontSize = 10.sp)
+                                Text("ZERO (ROOT)", fontSize = 10.sp, color = Color.White)
                             }
 
                             Button(
@@ -988,7 +1404,7 @@ fun Graph2DComposable(
                                 modifier = Modifier.weight(1f).height(36.dp),
                                 contentPadding = PaddingValues(2.dp)
                             ) {
-                                Text("MIN / MAX", fontSize = 10.sp)
+                                Text("MIN / MAX", fontSize = 10.sp, color = Color.White)
                             }
 
                             Button(
@@ -997,28 +1413,28 @@ fun Graph2DComposable(
                                 modifier = Modifier.weight(1.2f).height(36.dp),
                                 contentPadding = PaddingValues(2.dp)
                             ) {
-                                val symbol = "∫f(x)dx"
-                                Text(symbol, fontSize = 10.sp)
+                                Text("∫f(x)dx", fontSize = 10.sp, color = Color.White)
                             }
                         }
                     }
                 }
 
                 2 -> {
-                    // Custom designs rendering styling toggle options
+                    // Rendering Style Controls
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F3F9))) {
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))) {
                             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Styling Settings", fontWeight = FontWeight.Bold, fontSize = 12.sp)
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("Toggle Plane Gridlines")
                                     Switch(checked = toggleGrid, onCheckedChange = { toggleGrid = it })
@@ -1026,7 +1442,8 @@ fun Graph2DComposable(
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("Toggle Origin Axes lines")
                                     Switch(checked = toggleAxes, onCheckedChange = { toggleAxes = it })
@@ -1034,7 +1451,8 @@ fun Graph2DComposable(
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("Area Shaded Under Curve")
                                     Switch(checked = fillUnderCurves, onCheckedChange = { fillUnderCurves = it })
@@ -1052,12 +1470,12 @@ fun Graph2DComposable(
                                             Button(
                                                 onClick = { lineStyle = style },
                                                 colors = ButtonDefaults.buttonColors(
-                                                    containerColor = if (isSel) Color.DarkGray else Color.LightGray
+                                                    containerColor = if (isSel) MaterialTheme.colorScheme.primary else Color.LightGray
                                                 ),
                                                 modifier = Modifier.height(28.dp),
                                                 contentPadding = PaddingValues(horizontal = 6.dp)
                                             ) {
-                                                Text(style, fontSize = 9.sp, color = Color.White)
+                                                Text(style, fontSize = 9.sp, color = if (isSel) Color.White else Color.Black)
                                             }
                                         }
                                     }
@@ -1068,7 +1486,7 @@ fun Graph2DComposable(
                 }
 
                 3 -> {
-                    // Special plots
+                    // Statistical overlays
                     Column(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1086,24 +1504,141 @@ fun Graph2DComposable(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(if (isSel) Color(0xFFD3E3FD) else Color(0xFFF1F3F9), RoundedCornerShape(8.dp))
+                                    .background(if (isSel) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
                                     .clickable {
                                         activeSpecialPlot = if (isSel) null else key
                                     }
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
-                              ) {
-                                  Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = if (isSel) Color(0xFF001D47) else Color.Black)
-                                  if (isSel) {
-                                      Icon(imageVector = Icons.Default.Check, contentDescription = "Matched", tint = Color(0xFF001D47))
-                                  }
-                              }
+                            ) {
+                                Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                if (isSel) {
+                                    Icon(imageVector = Icons.Default.Check, contentDescription = "Checked", tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    // A. Dynamic Color Customization Selector Dialog for slots
+    if (showColorPickerDialogForSlot != null) {
+        val slotIdx = showColorPickerDialogForSlot!!
+        AlertDialog(
+            onDismissRequest = { showColorPickerDialogForSlot = null },
+            title = { Text("Choose Curve Color") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Select a color for your plot:", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(bottom = 12.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val availableColors = listOf(
+                            Color(0xFF1673E8), // f(x)
+                            Color(0xFF2FA24E), // g(x)
+                            Color(0xFFEA4335), // h(x)
+                            Color(0xFFF39C12), // p(x)
+                            Color(0xFF1ABC9C), // q(x)
+                            Color(0xFF8E44AD), // r(x)
+                            Color(0xFFE854FF), // Pink
+                            Color(0xFF00FFCC)  // Neon Mint
+                        )
+                        availableColors.forEach { col ->
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(col, CircleShape)
+                                    .border(
+                                        width = if (slotColors[slotIdx] == col) 3.dp else 1.dp,
+                                        color = if (slotColors[slotIdx] == col) MaterialTheme.colorScheme.primary else Color.White,
+                                        shape = CircleShape
+                                    )
+                                    .clickable {
+                                        slotColors[slotIdx] = col
+                                        showColorPickerDialogForSlot = null
+                                    }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showColorPickerDialogForSlot = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // B. Mathematical Formula/Symbols Shortcut Palette Selector Dialog
+    if (showKeyboardHelperForSlot != null) {
+        val slotIdx = showKeyboardHelperForSlot!!
+        val currentText = functions[slotIdx]
+        AlertDialog(
+            onDismissRequest = { showKeyboardHelperForSlot = null },
+            title = { Text("Quick Math Symbols Selector") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val symbols = listOf(
+                        Pair("sin(", "sin("),
+                        Pair("cos(", "cos("),
+                        Pair("tan(", "tan("),
+                        Pair("x", "x"),
+                        Pair("^2", "^2"),
+                        Pair("^", "^"),
+                        Pair("pi", "pi"),
+                        Pair("theta", "theta"),
+                        Pair("sqrt(", "sqrt("),
+                        Pair("+", "+"),
+                        Pair("-", "-"),
+                        Pair("*", "*"),
+                        Pair("/", "/")
+                    )
+
+                    Text("Tap to insert symbols into slot:", fontSize = 11.sp, color = Color.Gray)
+
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(4),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                    ) {
+                        items(symbols.size) { index ->
+                            val (label, insertValue) = symbols[index]
+                            Button(
+                                onClick = {
+                                    functions[slotIdx] = currentText + insertValue
+                                    showKeyboardHelperForSlot = null
+                                },
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.height(36.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            ) {
+                                Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showKeyboardHelperForSlot = null }) {
+                    Text("Done")
+                }
+            }
+        )
     }
 
     // Modal dialogue setting viewport bounds manually
@@ -1159,7 +1694,7 @@ fun Graph2DComposable(
                     }
 
                     // Quick Presets
-                    var testStr = "ZOOM Quick Presets:"
+                    val testStr = "ZOOM Quick Presets:"
                     Text(testStr, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.Gray)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1177,7 +1712,7 @@ fun Graph2DComposable(
                             modifier = Modifier.weight(1f),
                             contentPadding = PaddingValues(2.dp)
                         ) {
-                            var tLabel = "TRIG (2pi)"
+                            val tLabel = "TRIG (2pi)"
                             Text(tLabel, fontSize = 9.sp)
                         }
                         Button(
